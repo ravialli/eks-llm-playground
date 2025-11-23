@@ -1,0 +1,27 @@
+# ollama-values.yaml
+
+replicaCount: 1
+
+persistentVolume:
+  enabled: true
+  size: 20Gi        # models + cache
+  storageClassName: gp3  # or your cluster default
+
+ollama:
+  gpu:
+    enabled: false  # CPU-only
+  models:
+    pull:
+      - llama3.2:1b   # very small model
+    run:
+      - llama3.2:1b
+
+# Make sure Ollama only runs on the llm node group
+nodeSelector:
+  role: llm
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "llm"
+    effect: "NoSchedule"

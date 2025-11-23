@@ -1,0 +1,24 @@
+# openwebui-values.yaml
+
+replicaCount: 1
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: gp3
+
+# Put WebUI on the small "system" nodes
+nodeSelector:
+  role: llm
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "llm"
+    effect: "NoSchedule"
+
+env:
+  - name: K8S_FLAG
+    value: "true"
+  - name: OLLAMA_BASE_URL
+    value: "http://ollama.llm.svc.cluster.local:11434"  # namespace/name of svc from the ollama chart
