@@ -2,6 +2,20 @@
 
 replicaCount: 1
 
+# Ollama is deployed separately using otwld/ollama
+ollama:
+  enabled: false
+
+# Connect Open WebUI to the separate Ollama release
+ollamaUrls:
+  - http://ollama.llm.svc.cluster.local:11434
+
+websocket:
+  enabled: true
+  manager: ""
+  redis:
+    enabled: false
+
 persistence:
   enabled: true
   size: 5Gi
@@ -17,8 +31,6 @@ tolerations:
     value: "llm"
     effect: "NoSchedule"
 
-env:
-  - name: K8S_FLAG
-    value: "true"
-  - name: OLLAMA_BASE_URL
-    value: "http://ollama.llm.svc.cluster.local:11434"  # namespace/name of svc from the ollama chart
+# Not needed for this playground
+pipelines:
+  enabled: false
