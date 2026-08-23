@@ -2,8 +2,8 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.0"
 
-  name               = "${local.name}-bottlerocket"
-  kubernetes_version = "1.33"
+  name               = "${local.name}"
+  kubernetes_version = "1.36"
   enable_irsa        = true
 
   addons = {
@@ -98,6 +98,5 @@ module "ebs_csi_irsa_role" {
 resource "aws_eks_addon" "ebs_csi" {
   cluster_name             = module.eks.cluster_name
   addon_name               = "aws-ebs-csi-driver"
-  most_recent              = true
   service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
 }

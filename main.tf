@@ -8,7 +8,7 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  name   = "eks-demo"
+  name   = "eks-llm-playground"
 
   vpc_cidr = "10.0.0.0/16"
 
