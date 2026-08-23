@@ -142,7 +142,7 @@ That separation makes it easier to experiment with the application layer without
 │   └── openwebui-values.yaml
 │
 ├── docs/
-│   └── OPERATIONS.md
+│   └── operations.md
 │
 ├── .terraform.lock.hcl
 ├── LICENSE
