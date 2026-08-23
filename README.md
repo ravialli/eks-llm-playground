@@ -183,7 +183,7 @@ Then deploy Ollama and Open WebUI using the configuration under `helm/`.
 
 For the full setup, verification, troubleshooting, and cleanup workflow, see:
 
-**[Operations guide](docs/OPERATIONS.md)**
+**[Operations guide](docs/operations.md)**
 
 For application-specific Helm details, see:
 
