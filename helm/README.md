@@ -1,0 +1,627 @@
+# Helm deployments
+
+This directory contains the Helm configuration I use to run Ollama and Open WebUI on the EKS playground.
+
+I keep Ollama and Open WebUI as separate Helm releases instead of using the Ollama dependency bundled with the Open WebUI chart. That makes it easier for me to change or upgrade either component independently.
+
+Both applications run in the `llm` namespace.
+
+## Upstream charts
+
+I'm using two upstream charts:
+
+| Application | Chart                   | Maintainer |
+| ----------- | ----------------------- | ---------- |
+| Ollama      | `otwld/ollama`          | OTWLD      |
+| Open WebUI  | `open-webui/open-webui` | Open WebUI |
+
+Ollama is installed from the OTWLD Helm repository.
+
+Open WebUI is installed from the official Open WebUI Helm repository.
+
+I don't vendor either chart into this repository. This directory only contains the values that are specific to my EKS environment.
+
+## Files
+
+```text
+helm/
+├── README.md
+├── ollama-values.yaml
+└── openwebui-values.yaml
+```
+
+`ollama-values.yaml` configures the Ollama workload, model storage, node placement, and the model I want pulled at startup.
+
+`openwebui-values.yaml` configures Open WebUI, persistent storage, node placement, and the connection to the separate Ollama service.
+
+## Before installing
+
+The Terraform side of the project should already be deployed before installing these charts.
+
+I expect the cluster to have:
+
+* an EKS cluster available through the current kubeconfig
+* the EBS CSI driver installed
+* the `gp3-csi` StorageClass
+* an LLM node group
+* `role=llm` on the LLM nodes
+* the `workload=llm:NoSchedule` taint on those nodes
+
+Check the current cluster:
+
+```bash
+kubectl cluster-info
+kubectl get nodes
+```
+
+Check the LLM nodes:
+
+```bash
+kubectl get nodes -l role=llm
+```
+
+Check storage:
+
+```bash
+kubectl get storageclass
+kubectl get storageclass gp3-csi
+```
+
+If any of those fail, I fix the cluster first rather than debugging Helm on top of an incomplete EKS deployment.
+
+## Add the Helm repositories
+
+Add the Ollama repository:
+
+```bash
+helm repo add otwld https://helm.otwld.com/
+```
+
+Add the Open WebUI repository:
+
+```bash
+helm repo add open-webui https://open-webui.github.io/helm-charts
+```
+
+Then update the local Helm repository cache:
+
+```bash
+helm repo update
+```
+
+Confirm that both charts are available:
+
+```bash
+helm search repo otwld/ollama
+helm search repo open-webui/open-webui
+```
+
+To see available versions:
+
+```bash
+helm search repo otwld/ollama --versions
+helm search repo open-webui/open-webui --versions
+```
+
+## Namespace
+
+I keep both applications in the same namespace:
+
+```bash
+kubectl create namespace llm
+```
+
+If it already exists, Kubernetes will return an `AlreadyExists` message, which is fine.
+
+Verify it:
+
+```bash
+kubectl get namespace llm
+```
+
+## Validate the values before installing
+
+I like checking what Helm will render before applying anything to the cluster.
+
+For Ollama:
+
+```bash
+helm template ollama otwld/ollama \
+  --namespace llm \
+  --values ollama-values.yaml
+```
+
+For Open WebUI:
+
+```bash
+helm template open-webui open-webui/open-webui \
+  --namespace llm \
+  --values openwebui-values.yaml
+```
+
+This catches bad values and obvious rendering problems before creating resources.
+
+## Install Ollama
+
+Install or upgrade Ollama with:
+
+```bash
+helm upgrade --install ollama otwld/ollama \
+  --namespace llm \
+  --create-namespace \
+  --values ollama-values.yaml
+```
+
+Check the release:
+
+```bash
+helm list -n llm
+```
+
+Check the workload:
+
+```bash
+kubectl get pods -n llm
+kubectl get svc -n llm
+kubectl get pvc -n llm
+```
+
+I also check where Ollama was scheduled:
+
+```bash
+kubectl get pods -n llm -o wide
+```
+
+It should land on a node with:
+
+```text
+role=llm
+```
+
+because the values file includes the corresponding node selector and toleration.
+
+## Ollama storage
+
+Ollama stores downloaded models on a persistent EBS volume.
+
+The values file should use:
+
+```yaml
+persistentVolume:
+  enabled: true
+  size: 20Gi
+  storageClass: gp3-csi
+```
+
+The important part is `storageClass`, not `storageClassName`. That is the value expected by the upstream Ollama chart.
+
+After installation:
+
+```bash
+kubectl get pvc -n llm
+```
+
+The PVC should eventually become:
+
+```text
+Bound
+```
+
+If it stays `Pending`, I check the PVC events and EBS CSI controller before troubleshooting Ollama itself:
+
+```bash
+kubectl describe pvc -n llm
+```
+
+## Ollama model
+
+For now I'm deliberately using a small CPU-friendly model:
+
+```text
+llama3.2:1b
+```
+
+The playground is mainly for Kubernetes experimentation, so I don't need an expensive GPU node just to verify scheduling, storage, networking, and application behavior.
+
+The values file handles pulling the model when Ollama starts.
+
+Check the Ollama logs with:
+
+```bash
+kubectl logs -n llm deployment/ollama -f
+```
+
+Depending on the resources generated by the chart version, I may first find the pod with:
+
+```bash
+kubectl get pods -n llm
+```
+
+and then use:
+
+```bash
+kubectl logs -n llm <ollama-pod-name> -f
+```
+
+## Install Open WebUI
+
+I deploy Open WebUI separately from Ollama:
+
+```bash
+helm upgrade --install open-webui open-webui/open-webui \
+  --namespace llm \
+  --values openwebui-values.yaml
+```
+
+Then check:
+
+```bash
+kubectl get pods -n llm
+kubectl get svc -n llm
+kubectl get pvc -n llm
+```
+
+## External Ollama configuration
+
+The Open WebUI chart can deploy its own Ollama dependency, but I don't use that here because Ollama already has its own Helm release.
+
+My Open WebUI values therefore include:
+
+```yaml
+ollama:
+  enabled: false
+```
+
+Open WebUI connects to the Ollama service already running in the namespace:
+
+```yaml
+ollamaUrls:
+  - http://ollama.llm.svc.cluster.local:11434
+```
+
+Because both applications run inside Kubernetes, Ollama does not need to be exposed publicly.
+
+The communication path is:
+
+```text
+Browser
+   │
+   ▼
+Open WebUI
+   │
+   │ Kubernetes service DNS
+   ▼
+ollama.llm.svc.cluster.local:11434
+   │
+   ▼
+Ollama
+   │
+   ▼
+llama3.2:1b
+```
+
+## Open WebUI storage
+
+Open WebUI also uses persistent storage.
+
+The upstream chart expects:
+
+```yaml
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: gp3-csi
+```
+
+After installation:
+
+```bash
+kubectl get pvc -n llm
+```
+
+Both the Open WebUI and Ollama PVCs should be visible.
+
+## Open WebUI extras
+
+The upstream Open WebUI chart can also deploy additional components such as Ollama, Pipelines, and Redis-backed WebSocket support.
+
+For this small playground, I keep the configuration deliberately limited.
+
+Since Ollama runs separately:
+
+```yaml
+ollama:
+  enabled: false
+```
+
+If I'm not experimenting with Open WebUI Pipelines, I also disable them:
+
+```yaml
+pipelines:
+  enabled: false
+```
+
+For a single Open WebUI replica, I can also use the in-memory WebSocket manager instead of deploying Redis.
+
+That is fine for this playground, but it is not the configuration I would use for a multi-replica production deployment.
+
+## Accessing Open WebUI
+
+I don't expose Open WebUI publicly by default.
+
+For local access, I use port forwarding:
+
+```bash
+kubectl port-forward -n llm svc/open-webui 8080:80
+```
+
+Then I open:
+
+```text
+http://localhost:8080
+```
+
+This keeps the playground private while I'm experimenting.
+
+If the generated service has a different name, I check it first:
+
+```bash
+kubectl get svc -n llm
+```
+
+and port-forward the actual Open WebUI service name.
+
+## Checking connectivity to Ollama
+
+First check that the Ollama service exists:
+
+```bash
+kubectl get svc -n llm
+```
+
+Then check its endpoints:
+
+```bash
+kubectl get endpoints -n llm ollama
+```
+
+If Open WebUI starts but cannot reach Ollama, I check the Open WebUI logs:
+
+```bash
+kubectl logs -n llm deployment/open-webui -f
+```
+
+I can also test Kubernetes DNS from inside the cluster if necessary.
+
+## Check Helm releases
+
+```bash
+helm list -n llm
+```
+
+Expected releases:
+
+```text
+ollama
+open-webui
+```
+
+Get details for a release:
+
+```bash
+helm status ollama -n llm
+helm status open-webui -n llm
+```
+
+## Inspect upstream defaults
+
+Before changing a value, I check the upstream chart instead of assuming a key name.
+
+Ollama:
+
+```bash
+helm show values otwld/ollama
+```
+
+Open WebUI:
+
+```bash
+helm show values open-webui/open-webui
+```
+
+This is especially useful because Helm chart values can change between chart releases.
+
+## Version pinning
+
+While experimenting, I may use the current chart versions.
+
+For anything I want to reproduce later, I pin the chart version explicitly.
+
+Find available versions:
+
+```bash
+helm search repo otwld/ollama --versions
+helm search repo open-webui/open-webui --versions
+```
+
+Then install a specific version:
+
+```bash
+helm upgrade --install ollama otwld/ollama \
+  --namespace llm \
+  --values ollama-values.yaml \
+  --version <chart-version>
+```
+
+and:
+
+```bash
+helm upgrade --install open-webui open-webui/open-webui \
+  --namespace llm \
+  --values openwebui-values.yaml \
+  --version <chart-version>
+```
+
+I prefer this over putting a moving "latest" version in the repository documentation.
+
+## Upgrading
+
+Refresh the repositories:
+
+```bash
+helm repo update
+```
+
+Review available versions:
+
+```bash
+helm search repo otwld/ollama --versions
+helm search repo open-webui/open-webui --versions
+```
+
+Review upstream changes before upgrading, especially if values or persistence behavior changed.
+
+Then upgrade using the same values files:
+
+```bash
+helm upgrade ollama otwld/ollama \
+  --namespace llm \
+  --values ollama-values.yaml
+```
+
+```bash
+helm upgrade open-webui open-webui/open-webui \
+  --namespace llm \
+  --values openwebui-values.yaml
+```
+
+## Troubleshooting
+
+Start with the simple things:
+
+```bash
+kubectl get pods -n llm
+kubectl get svc -n llm
+kubectl get pvc -n llm
+kubectl get events -n llm --sort-by=.lastTimestamp
+```
+
+Describe a pod that isn't starting:
+
+```bash
+kubectl describe pod -n llm <pod-name>
+```
+
+Check logs:
+
+```bash
+kubectl logs -n llm <pod-name>
+```
+
+For a pod that keeps restarting:
+
+```bash
+kubectl logs -n llm <pod-name> --previous
+```
+
+### Pod is Pending
+
+I check:
+
+```bash
+kubectl describe pod -n llm <pod-name>
+kubectl get nodes --show-labels
+```
+
+Common things to verify are:
+
+* the `role=llm` label exists
+* the LLM taint matches the toleration
+* the node has enough CPU and memory
+* the PVC can be provisioned
+
+### PVC is Pending
+
+Check:
+
+```bash
+kubectl describe pvc -n llm <pvc-name>
+kubectl get storageclass gp3-csi
+```
+
+Then check the EBS CSI pods:
+
+```bash
+kubectl get pods -n kube-system | grep ebs
+```
+
+### Open WebUI can't connect to Ollama
+
+Check Ollama first:
+
+```bash
+kubectl get pods -n llm
+kubectl get svc -n llm
+kubectl get endpoints -n llm ollama
+```
+
+Then confirm that Open WebUI is using:
+
+```text
+http://ollama.llm.svc.cluster.local:11434
+```
+
+## Uninstalling
+
+Remove Open WebUI:
+
+```bash
+helm uninstall open-webui -n llm
+```
+
+Remove Ollama:
+
+```bash
+helm uninstall ollama -n llm
+```
+
+Helm may leave persistent volume claims behind intentionally.
+
+Check them before deleting anything:
+
+```bash
+kubectl get pvc -n llm
+```
+
+If I actually want to remove the stored models and Open WebUI data:
+
+```bash
+kubectl delete pvc --all -n llm
+```
+
+That permanently deletes the data backed by those claims, so I only run it when I know I don't need the data anymore.
+
+Finally:
+
+```bash
+kubectl delete namespace llm
+```
+
+The AWS infrastructure itself is managed separately by Terraform and is cleaned up from the repository root with:
+
+```bash
+terraform destroy
+```
+
+## Why I keep Helm separate from Terraform
+
+I could manage these applications with Terraform Helm resources, but for this playground I intentionally keep the layers separate.
+
+Terraform owns the AWS and EKS infrastructure.
+
+Helm owns the applications running on the cluster.
+
+That makes it easier for me to rebuild the infrastructure, experiment with application values, and upgrade Ollama or Open WebUI without tying every application change to a Terraform apply.
+
+For a larger environment, I'd probably move the application layer toward GitOps instead.
+
