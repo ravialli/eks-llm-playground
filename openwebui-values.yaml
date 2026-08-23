@@ -5,9 +5,9 @@ replicaCount: 1
 persistence:
   enabled: true
   size: 5Gi
-  storageClassName: gp3
+  storageClassName: gp3-csi
 
-# Put WebUI on the small "system" nodes
+# Run Open WebUI on the dedicated LLM node group
 nodeSelector:
   role: llm
 
