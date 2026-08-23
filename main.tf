@@ -16,7 +16,7 @@ locals {
 
   tags = {
     Name    = local.name
-    GithubRepo = "eks-playground"
+    GithubRepo = "eks-llm-playground"
 
   }
 }
